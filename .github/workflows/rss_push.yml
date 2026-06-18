@@ -1,5 +1,9 @@
 name: 保险资讯推送
 
+concurrency:
+  group: insurance-news
+  cancel-in-progress: false
+  
 on:
   schedule:
     # 每两小时运行一次（UTC时间，北京时间=UTC+8）
@@ -35,6 +39,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add sent_guids.json
-          git diff --staged --quiet || git commit -m "chore: update sent_guids [skip ci]"
-          git push
+
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update sent_guids [skip ci]"
+            git pull --rebase origin main
+            git push origin main
+          fi
