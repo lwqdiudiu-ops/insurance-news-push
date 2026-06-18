@@ -1,49 +1,41 @@
 name: 保险资讯推送
-
-concurrency:
-  group: insurance-news
-  cancel-in-progress: false
-  
+ 
 on:
   schedule:
     # 每两小时运行一次（UTC时间，北京时间=UTC+8）
     # 覆盖北京时间 8:00 ~ 22:00
     - cron: '0 0,2,4,6,8,10,12,14 * * *'
   workflow_dispatch:  # 允许手动触发，方便测试
-
+ 
 jobs:
   push-news:
     runs-on: ubuntu-latest
-
+ 
     steps:
       - name: Checkout 仓库
         uses: actions/checkout@v4
         with:
           # 需要写权限来保存 sent_guids.json
           token: ${{ secrets.GITHUB_TOKEN }}
-
+ 
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+ 
       - name: 安装依赖
         run: pip install feedparser requests
-
+ 
       - name: 运行推送脚本
         env:
           WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
         run: python rss_push.py
-
+ 
       - name: 保存 sent_guids.json（提交回仓库）
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add sent_guids.json
-
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: update sent_guids [skip ci]"
-            git pull --rebase origin main
-            git push origin main
-          fi
+          git diff --staged --quiet || git commit -m "chore: update sent_guids [skip ci]"
+          git pull --rebase=false -X ours origin main || true
+          git push origin main
