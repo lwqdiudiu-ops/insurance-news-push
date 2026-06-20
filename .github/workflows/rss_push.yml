@@ -38,7 +38,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main
+          git fetch origin main
+          git checkout origin/main -- sent_guids.json 2>/dev/null || true
           git add sent_guids.json
           git diff --staged --quiet || git commit -m "chore: update sent_guids [skip ci]"
-          git push origin main
+          git push origin HEAD:main
