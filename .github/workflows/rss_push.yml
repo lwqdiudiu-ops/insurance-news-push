@@ -1,45 +1,67 @@
-name: 保险资讯推送
-
+name: 行业资讯微信推送
 on:
   schedule:
-    # 每两小时运行一次（UTC时间，北京时间=UTC+8）
-    # 覆盖北京时间 8:00 ~ 22:00
-    - cron: '0 0,2,4,6,8,10,12,14 * * *'
-  workflow_dispatch:  # 允许手动触发，方便测试
-
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
 concurrency:
-  group: push-news
+  group: industry-news-push
   cancel-in-progress: false
-
 jobs:
-  push-news:
+  news:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout 仓库
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 安装依赖
-        run: pip install feedparser requests
-
-      - name: 运行推送脚本
-        env:
-          WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
-        run: python rss_push.py
-
-      - name: 保存 sent_guids.json（提交回仓库）
+          python-version: '3.12'
+      - name: 安装依赖并测试
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout origin/main -- sent_guids.json 2>/dev/null || true
-          git add sent_guids.json
-          git diff --staged --quiet || git commit -m "chore: update sent_guids [skip ci]"
-          git push origin HEAD:main
+          python -m pip install -r requirements.txt
+          python -m unittest -v
+      - name: 检查微信密钥
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: |
+          python - <<'PY'
+          import os,re
+          if not re.fullmatch(r'SCT[A-Za-z0-9]+',os.environ.get('SERVERCHAN_SENDKEY','').strip()):
+              raise SystemExit('请在仓库 Actions Secrets 中配置 SERVERCHAN_SENDKEY')
+          PY
+      - name: 恢复去重记录
+        id: restore
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python github_state.py restore
+      - name: 采集并推送
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: python news_push.py
+      - name: 保存去重记录（推送失败时也保存待发送内容）
+        if: ${{ always() && steps.restore.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python github_state.py save
+      - name: 输出运行摘要
+        if: always()
+        run: |
+          python - <<'PY'
+          import json,os
+          from pathlib import Path
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              p=Path('status.json')
+              if p.exists():
+                  d=json.loads(p.read_text())
+                  f.write('检查时间：'+d['checked_at']+'\n\n')
+                  for s in d['sources']:
+                      f.write('- '+s['source']+'：'+('成功，文章 '+str(s['articles'])+'，标题匹配 '+str(s['matched']) if s['ok'] else '采集失败')+'\n')
+              p=Path('delivery.json')
+              if p.exists():
+                  f.write('\n推送已被服务商接受：'+str(json.loads(p.read_text())['items'])+' 条（不代表手机送达）\n')
+              else:
+                  f.write('\n本轮没有已确认接受的推送。请结合步骤日志判断无新增或执行失败。\n')
+          PY
