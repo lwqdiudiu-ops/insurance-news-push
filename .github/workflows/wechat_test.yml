@@ -1,0 +1,35 @@
+name: 微信连接测试
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: 直接发送一条微信连接测试
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: |
+          python3 - <<'PY'
+          import os,re,json,urllib.request,urllib.parse,datetime
+          key=os.environ.get('SERVERCHAN_SENDKEY','').strip()
+          if not re.fullmatch(r'SCT[A-Za-z0-9]+',key):
+              raise SystemExit('SERVERCHAN_SENDKEY 未配置或格式不正确')
+          stamp=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')
+          data=urllib.parse.urlencode({'title':'资讯工具｜GitHub微信连接测试','desp':'这是一条独立测试消息。收到它说明 GitHub 中配置的 SendKey 可以通过当前微信通道发送。\n\n测试时间：'+stamp+'\n\n本测试不抓取资讯、不修改去重记录。'}).encode()
+          request=urllib.request.Request('https://sctapi.ftqq.com/'+key+'.send',data=data,method='POST')
+          try:
+              with urllib.request.urlopen(request,timeout=30) as response:
+                  result=json.load(response)
+          except Exception:
+              raise SystemExit('测试请求失败：网络、HTTP或响应格式异常。未打印请求地址以保护密钥。') from None
+          code=result.get('code')
+          if code!=0:
+              print('Server酱返回业务错误码：',code)
+              raise SystemExit('服务商未接受，请到Server酱后台检查密钥、通道及额度。')
+          print('Server酱已接受测试消息，请现在检查方糖服务号及Server酱推送日志。接受不等于手机送达。')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('Server酱已接受微信连接测试。测试时间：'+stamp+'。请检查手机及Server酱推送日志。\n')
+          PY
