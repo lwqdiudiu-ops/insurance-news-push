@@ -1,0 +1,56 @@
+name: 立即发送资讯样例
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+      - name: 抓取并发送最多5条资讯样例
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: |
+          python - <<'PY'
+          import concurrent.futures,os,re,datetime
+          import requests
+          import news_push as n
+          key=os.environ.get('SERVERCHAN_SENDKEY','').strip()
+          if not re.fullmatch(r'SCT[A-Za-z0-9]+',key):
+              raise SystemExit('请检查SERVERCHAN_SENDKEY配置')
+          results=list(concurrent.futures.ThreadPoolExecutor(max_workers=6).map(n.fetch,n.SOURCES))
+          status=[s for _,s in results]
+          articles=[a for rows,_ in results for a in rows if a['category']]
+          articles.sort(key=lambda a:list(n.KEYS).index(a['category']))
+          selected=[];seen=set()
+          for a in articles:
+              fingerprint=re.sub(r'\W','',a['title']).lower()
+              if fingerprint in seen:continue
+              seen.add(fingerprint);selected.append(a)
+              if len(selected)>=5:break
+          for s in status:
+              print(s['source'],'成功' if s['ok'] else '采集失败')
+          if not selected:raise SystemExit('本次未抓到匹配资讯，未发送；请检查来源状态')
+          body='这是当前页面资讯的展示样例，并非最近两小时新发表的新闻；未按发表时间排序。本次不修改正式去重记录。\n\n'+n.digest(selected,status)
+          try:
+              response=requests.post('https://sctapi.ftqq.com/'+key+'.send',data={'title':'保险资讯样例｜'+str(len(selected))+'条','desp':body},timeout=(10,30))
+          except Exception:
+              raise SystemExit('推送网络请求失败；未打印含密钥的请求地址') from None
+          if response.status_code!=200:raise SystemExit('推送HTTP错误：'+str(response.status_code))
+          try:result=response.json()
+          except Exception:raise SystemExit('推送返回格式异常') from None
+          if result.get('code')!=0:
+              print('服务商错误码',result.get('code'))
+              raise SystemExit('服务商未接受样例推送，请检查Server酱日志、通道和额度')
+          print('服务商已接受'+str(len(selected))+'条资讯样例，请检查微信。')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('已向Server酱提交以下资讯样例（不代表近期新增；未修改去重库）：\n\n')
+              for a in selected:f.write('- ['+a['title']+']('+a['url']+') · '+a['source']+'\n')
+          PY
