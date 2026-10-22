@@ -26,6 +26,15 @@ def classify(text):
   if any((bool(re.search(r'\b'+re.escape(w)+r'\b',text)) if w.isascii() else w in text) for w in words): return group
  return None
 
+def classify_article(title, url):
+ # Fierce 的栏目提供比标题关键词更可靠的行业信息。
+ path=urlsplit(url).path
+ host=urlsplit(url).hostname or ''
+ if host=='www.fiercehealthcare.com':
+  if path.startswith('/payers/'):return '保险'
+  if path.startswith('/providers/'):return '医疗'
+ return classify(title)
+
 def fetch(source):
  name,url,pattern=source
  s=requests.Session();s.headers['User-Agent']='IndustryNewsMonitor/1.0 (personal news digest)'
@@ -39,7 +48,14 @@ def fetch(source):
    data=r.json()
    if int(data.get('status',0))!=200: raise ValueError('动态列表接口失败')
    soup=BeautifulSoup(''.join('<a href="/n'+html.escape(str(x['NewsCode']))+'/detail.html">'+html.escape(x['NewsTitle'])+'</a>' for x in data['data']['data']),'html.parser')
-  else: soup=BeautifulSoup(get(url),'html.parser')
+  else:
+   pages=[get(url)]
+   page_errors=[]
+   if name=='Fierce Healthcare':
+    for section in ['payers','providers']:
+     try:pages.append(get(url+section))
+     except Exception:page_errors.append(section)
+   soup=BeautifulSoup('\n'.join(pages),'html.parser')
   found={}
   for a in soup.select('a[href]'):
    link=urljoin(url,a['href']);parts=urlsplit(link)
@@ -48,9 +64,11 @@ def fetch(source):
    title=' '.join((heading or a).get_text(' ',strip=True).split())
    if not 8<=len(title)<=180: continue
    link=urlunsplit((parts.scheme,parts.netloc,parts.path,'',''))
-   if link not in found: found[link]={'title':title,'url':link,'source':name,'category':classify(title)}
+   if link not in found: found[link]={'title':title,'url':link,'source':name,'category':classify_article(title,link)}
   if not found: raise ValueError('未解析到文章：访问验证或页面结构变化')
-  return list(found.values()),{'source':name,'ok':True,'articles':len(found),'matched':sum(bool(x['category']) for x in found.values())}
+  info={'source':name,'ok':True,'articles':len(found),'matched':sum(bool(x['category']) for x in found.values())}
+  if name=='Fierce Healthcare' and page_errors:info['warning']='部分栏目访问失败：'+','.join(page_errors)
+  return list(found.values()),info
  except Exception as e:
   return [],{'source':name,'ok':False,'error':type(e).__name__+': '+str(e)[:160]}
 
@@ -84,6 +102,9 @@ def run(preview=False):
    baseline=db.execute('SELECT 1 FROM sources WHERE name=?',(st['source'],)).fetchone() is None
    for a in rows:
     db.execute('INSERT OR IGNORE INTO articles VALUES (?,?,?,?,?,?)',(a['url'],a['title'],a['source'],a['category'],now,int(baseline or not a['category'])))
+    if a['category'] and not baseline:
+     cutoff=(dt.datetime.now(TZ)-dt.timedelta(hours=24)).isoformat()
+     db.execute('UPDATE articles SET category=?,sent=0 WHERE url=? AND category IS NULL AND first_seen>=?',(a['category'],a['url'],cutoff))
    db.execute('INSERT OR IGNORE INTO sources VALUES (?)',(st['source'],))
   db.commit()
   pending=[dict(zip(['url','title','source','category'],r)) for r in db.execute("SELECT url,title,source,category FROM articles WHERE sent=0 ORDER BY CASE category WHEN '保险' THEN 0 WHEN '养老' THEN 1 WHEN '医疗' THEN 2 ELSE 3 END, first_seen LIMIT 30")]

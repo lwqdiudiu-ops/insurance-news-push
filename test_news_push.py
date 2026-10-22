@@ -7,6 +7,10 @@ class Tests(unittest.TestCase):
   self.assertEqual(n.classify('险资加强养老医疗投资'),'保险')
   self.assertEqual(n.classify('Insurers expand Medicare coverage'),'保险')
   self.assertIsNone(n.classify('播放器发布新版本'))
+ def test_fierce_section_classification(self):
+  self.assertEqual(n.classify_article('Elevance Health Q3 earnings beat','https://www.fiercehealthcare.com/payers/elevance'),'保险')
+  self.assertEqual(n.classify_article('Integris joins Risant','https://www.fiercehealthcare.com/providers/integris'),'医疗')
+  self.assertIsNone(n.classify_article('随机无关标题','https://example.org/payers/foo'))
  def test_baseline_failure_retry_and_dedup(self):
   with tempfile.TemporaryDirectory() as d,patch.object(n,'ROOT',Path(d)),patch.object(n,'SOURCES',[n.SOURCES[1]]):
    a={'url':'https://example.org/1','title':'保险市场动态','source':'中新经纬','category':'保险'}
